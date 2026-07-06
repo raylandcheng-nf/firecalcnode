@@ -27,16 +27,6 @@ npm install
 
 Create `.env` in the `node` folder (you can copy `.env.example`):
 
-```env
-SECRET_KEY=replace-with-a-long-random-secret
-APP_ENV=development
-HOST=0.0.0.0
-PORT=8080
-RATE_LIMIT_BACKEND=memory
-RATE_LIMIT_WINDOW_SECONDS=60
-RATE_LIMIT_MAX_REQUESTS=60
-```
-
 ## Run Web App
 
 ```powershell
