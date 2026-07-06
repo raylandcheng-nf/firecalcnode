@@ -1,3 +1,16 @@
+[functions]
+node_bundler = "esbuild"
+included_files = ["views/**"]
+
+[build]
+functions = "netlify/functions"
+
 [build.environment]
 # These are non-secret operational config keys that can legitimately appear in source/docs.
 SECRETS_SCAN_OMIT_KEYS = "APP_ENV,HOST,PORT,MAX_CONTENT_LENGTH,RATE_LIMIT_BACKEND,RATE_LIMIT_MEMORY_MAX_KEYS,REDIS_URL,SESSION_STORE_BACKEND,SESSION_REDIS_URL,SESSION_REDIS_PREFIX,SESSION_COOKIE_MAX_AGE_SECONDS"
+
+[[redirects]]
+from = "/*"
+to = "/.netlify/functions/app"
+status = 200
+force = true
