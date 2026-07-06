@@ -1,0 +1,24 @@
+{
+  "name": "fire-monte-carlo-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js replication of FIRE Monte Carlo app",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "cli": "node src/cli.js"
+  },
+  "dependencies": {
+    "connect-redis": "^8.0.1",
+    "dotenv": "16.4.5",
+    "ejs": "3.1.10",
+    "express": "4.22.2",
+    "express-session": "1.19.0",
+    "helmet": "8.1.0",
+    "redis": "4.7.0"
+  },
+  "overrides": {
+    "path-to-regexp": "0.1.13"
+  }
+}

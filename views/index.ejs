@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FIRE Retirement Simulator (Node)</title>
+  <style>
+    :root {
+      --bg-1: #f6f4ee;
+      --bg-2: #dfe8e1;
+      --ink: #1f2a2d;
+      --ink-soft: #475357;
+      --card: rgba(255, 255, 255, 0.85);
+      --border: #a7b8ad;
+      --accent: #1e6d57;
+      --error: #9b2c2c;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--ink);
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 700px at 10% -10%, #cde2d8 0, transparent 60%),
+        radial-gradient(1100px 700px at 100% 0%, #f0d5c8 0, transparent 60%),
+        linear-gradient(135deg, var(--bg-1), var(--bg-2));
+      padding: 24px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(2rem, 5vw, 3rem); }
+    .sub { margin: 0 0 22px; color: var(--ink-soft); max-width: 65ch; }
+    .layout { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 10px 25px rgba(20, 40, 35, 0.08);
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    label { display: block; margin-bottom: 4px; font-size: 0.9rem; color: #254146; }
+    input {
+      width: 100%;
+      padding: 10px 11px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfcfb;
+      color: var(--ink);
+      font-size: 0.95rem;
+    }
+    .actions { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
+    button {
+      border: none;
+      border-radius: 11px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), #2f8a70);
+      color: #fff;
+    }
+    .hint { font-size: 0.86rem; color: var(--ink-soft); }
+    .error { margin-top: 10px; color: var(--error); font-weight: 700; }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px dashed #c3cfc8;
+      font-size: 0.95rem;
+    }
+    .table-wrap {
+      margin-top: 10px;
+      border: 1px solid #c3cfc8;
+      border-radius: 10px;
+      overflow: auto;
+      background: #fbfcfb;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 620px; }
+    thead th { text-align: left; padding: 8px; background: #ecf3ef; border-bottom: 1px solid #c3cfc8; }
+    tbody td { padding: 7px 8px; border-bottom: 1px solid #e2e9e5; white-space: nowrap; }
+    .row-hit { background: #e7f5ef; font-weight: 700; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>FIRE Retirement Simulator</h1>
+    <p class="sub">Node.js version. Enter assumptions to run deterministic FIRE and post-retirement Monte Carlo longevity simulation.</p>
+
+    <div class="layout">
+      <section class="card">
+        <h2>Inputs</h2>
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="<%= csrfToken %>">
+          <div class="grid">
+            <div><label for="age">Current age</label><input id="age" name="age" type="number" min="0" value="<%= values.age %>" required></div>
+            <div><label for="spend">Current annual spend ($)</label><input id="spend" name="spend" type="number" min="0" step="0.01" value="<%= values.spend %>" required></div>
+            <div><label for="investments">Current investments ($)</label><input id="investments" name="investments" type="number" min="0" step="0.01" value="<%= values.investments %>" required></div>
+            <div><label for="income">Current annual income ($)</label><input id="income" name="income" type="number" min="0" step="0.01" value="<%= values.income %>" required></div>
+            <div><label for="return_rate">Expected return rate (%)</label><input id="return_rate" name="return_rate" type="text" inputmode="decimal" value="<%= values.return_rate %>" required></div>
+            <div><label for="inflation_rate">Expected inflation rate (%)</label><input id="inflation_rate" name="inflation_rate" type="text" inputmode="decimal" value="<%= values.inflation_rate %>" required></div>
+            <div><label for="withdrawal_rate">Withdrawal rate (%)</label><input id="withdrawal_rate" name="withdrawal_rate" type="text" inputmode="decimal" value="<%= values.withdrawal_rate %>" required></div>
+            <div><label for="max_age">Projection max age</label><input id="max_age" name="max_age" type="number" min="1" value="<%= values.max_age %>" required></div>
+            <div><label for="income_growth_rate">Income growth rate (%) (optional)</label><input id="income_growth_rate" name="income_growth_rate" type="text" inputmode="decimal" value="<%= values.income_growth_rate %>"></div>
+            <div><label for="iterations">Monte Carlo iterations</label><input id="iterations" name="iterations" type="number" min="1" value="<%= values.iterations %>" required></div>
+            <div><label for="return_std_dev">Return std dev (%)</label><input id="return_std_dev" name="return_std_dev" type="text" inputmode="decimal" value="<%= values.return_std_dev %>" required></div>
+            <div><label for="inflation_std_dev">Inflation std dev (%)</label><input id="inflation_std_dev" name="inflation_std_dev" type="text" inputmode="decimal" value="<%= values.inflation_std_dev %>" required></div>
+            <div><label for="seed">Random seed (optional)</label><input id="seed" name="seed" type="number" value="<%= values.seed %>"></div>
+          </div>
+          <div class="actions">
+            <button type="submit">Run Simulation</button>
+            <span class="hint">Supports decimal comma input (example: 1,6)</span>
+          </div>
+          <% if (error) { %><div class="error">Input error: <%= error %></div><% } %>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Results</h2>
+        <% if (result) { %>
+          <h3>Deterministic</h3>
+          <div class="metric"><span>Estimated retirement age</span><strong><%= result.projection.retired ? result.projection.retirementAge : 'Not reached' %></strong></div>
+          <div class="metric"><span>Years to retirement</span><strong><%= result.projection.retired ? result.projection.retirementYearsFromNow : '-' %></strong></div>
+          <div class="metric"><span>Final portfolio</span><strong>$<%= money(result.projection.finalPortfolio) %></strong></div>
+          <div class="metric"><span>Final FIRE target</span><strong>$<%= money(result.projection.finalTarget) %></strong></div>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Year</th><th>Age</th><th>Start Portfolio</th><th>Annual Savings</th><th>After Savings</th><th>Return Amount</th></tr></thead>
+              <tbody>
+                <% result.deterministicRows.forEach(function(row) { %>
+                  <tr class="<%= row.reachedFire ? 'row-hit' : '' %>">
+                    <td><%= row.year %></td>
+                    <td><%= row.age %></td>
+                    <td>$<%= money(row.startPortfolio) %></td>
+                    <td>$<%= money(row.annualSavings) %></td>
+                    <td>$<%= money(row.afterSavings) %></td>
+                    <td>$<%= money(row.returnAmount) %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Monte Carlo</h3>
+          <div class="metric"><span>Iterations</span><strong><%= result.monteCarlo.iterations %></strong></div>
+          <% if (result.monteCarlo.retirementAge === null || result.monteCarlo.startingPortfolio === null) { %>
+            <p class="hint">Deterministic retirement point was not reached, so post-retirement longevity was not simulated.</p>
+          <% } else { %>
+            <div class="metric"><span>Starting retirement age</span><strong><%= result.monteCarlo.retirementAge %></strong></div>
+            <div class="metric"><span>Starting retirement portfolio</span><strong>$<%= money(result.monteCarlo.startingPortfolio) %></strong></div>
+            <% Object.keys(result.monteCarlo.targetAgeProbabilities).forEach(function(targetAge) { %>
+              <div class="metric"><span>Probability portfolio lasts to age <%= targetAge %></span><strong><%= pct(result.monteCarlo.targetAgeProbabilities[targetAge]) %></strong></div>
+            <% }) %>
+            <div class="metric"><span>Probability portfolio never runs out (through age <%= result.monteCarlo.simulationHorizonAge %>)</span><strong><%= pct(result.monteCarlo.neverRunOutProbability) %></strong></div>
+          <% } %>
+        <% } else { %>
+          <p class="hint">Submit the form to generate your FIRE estimate and Monte Carlo outcomes.</p>
+        <% } %>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
