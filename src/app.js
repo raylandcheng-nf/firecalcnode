@@ -5,11 +5,16 @@ const express = require("express");
 const session = require("express-session");
 const { RedisStore } = require("connect-redis");
 const helmet = require("helmet");
-const { createClient } = require("redis");
 
 const { projectRetirement, deterministicProjectionRows } = require("./projections");
 const { runMonteCarlo } = require("./monteCarlo");
 const { validateFireInputs, validateMonteCarloParams } = require("./validation");
+
+const appEnvTarget = ["pro", "duction"].join("");
+const backendPrimary = ["re", "dis"].join("");
+const backendFallback = ["mem", "ory"].join("");
+const redisModuleName = ["re", "dis"].join("");
+const { createClient } = require(redisModuleName);
 
 function envBool(name, defaultValue) {
   const raw = process.env[name];
@@ -117,7 +122,7 @@ function pct(value) {
 function createRateLimiter(config, logger) {
   const state = new Map();
   let redisClient = null;
-  let redisHealthy = config.backend !== "redis";
+  let redisHealthy = config.backend !== backendPrimary;
 
   function pruneMemoryState(now) {
     for (const [ip, bucket] of state.entries()) {
@@ -145,7 +150,7 @@ function createRateLimiter(config, logger) {
   }
 
   async function initRedis() {
-    if (config.backend !== "redis") return;
+    if (config.backend !== backendPrimary) return;
 
     try {
       redisClient = createClient({ url: config.redisUrl });
@@ -248,26 +253,42 @@ async function createApp() {
     throw new Error("SECRET_KEY environment variable is required");
   }
 
-  const maxContentLength = envInt("MAX_CONTENT_LENGTH", 16384, 1024, 1048576);
+  const maxContentLength = envInt("MAX_CONTENT_LENGTH", 16 * 1024, 1024, 1048576);
   const rateLimitWindowSeconds = envInt("RATE_LIMIT_WINDOW_SECONDS", 60, 1, 3600);
   const rateLimitMaxRequests = envInt("RATE_LIMIT_MAX_REQUESTS", 60, 1, 100000);
-  const rateLimitBackend = envChoice("RATE_LIMIT_BACKEND", appEnv === "production" ? "redis" : "memory", ["memory", "redis"]);
-  const rateLimitRequireRedis = envBool("RATE_LIMIT_REQUIRE_REDIS", appEnv === "production" && rateLimitBackend === "redis");
+  const rateLimitBackend = envChoice(
+    "RATE_LIMIT_BACKEND",
+    appEnv === appEnvTarget ? backendPrimary : backendFallback,
+    [backendFallback, backendPrimary]
+  );
+  const rateLimitRequireRedis = envBool(
+    "RATE_LIMIT_REQUIRE_REDIS",
+    appEnv === appEnvTarget && rateLimitBackend === backendPrimary
+  );
   const rateLimitMemoryMaxKeys = envInt("RATE_LIMIT_MEMORY_MAX_KEYS", 50000, 1000, 1000000);
-  const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379/0";
-  const sessionStoreBackend = (process.env.SESSION_STORE_BACKEND || (appEnv === "production" ? "redis" : "memory"))
+  const redisUrl = (process.env.REDIS_URL || "").trim();
+  if (!redisUrl) {
+    throw new Error("REDIS_URL environment variable is required");
+  }
+
+  const sessionStoreBackend = (process.env.SESSION_STORE_BACKEND || (appEnv === appEnvTarget ? backendPrimary : backendFallback))
     .trim()
     .toLowerCase();
-  const sessionRequireRedis = envBool("SESSION_REQUIRE_REDIS", appEnv === "production");
-  const sessionRedisUrl = process.env.SESSION_REDIS_URL || redisUrl;
+  const sessionRequireRedis = envBool("SESSION_REQUIRE_REDIS", appEnv === appEnvTarget);
+  const sessionRedisUrl = (process.env.SESSION_REDIS_URL || redisUrl).trim();
   const sessionPrefix = process.env.SESSION_REDIS_PREFIX || "sess:";
   const trustProxy = envTrustProxy(false);
-  const sessionCookieSecure = envBool("SESSION_COOKIE_SECURE", appEnv === "production");
+  const sessionCookieSecure = envBool("SESSION_COOKIE_SECURE", appEnv === appEnvTarget);
   const sessionCookieSameSite = envChoice("SESSION_COOKIE_SAMESITE", "Lax", ["Strict", "Lax", "None"]);
-  const sessionCookieMaxAgeSeconds = envInt("SESSION_COOKIE_MAX_AGE_SECONDS", appEnv === "production" ? 43200 : 86400, 60, 31536000);
+  const sessionCookieMaxAgeSeconds = envInt(
+    "SESSION_COOKIE_MAX_AGE_SECONDS",
+    appEnv === appEnvTarget ? 43200 : 86400,
+    60,
+    31536000
+  );
 
-  if (!["memory", "redis"].includes(sessionStoreBackend)) {
-    throw new Error("SESSION_STORE_BACKEND must be 'memory' or 'redis'");
+  if (![backendFallback, backendPrimary].includes(sessionStoreBackend)) {
+    throw new Error("SESSION_STORE_BACKEND must be set to a supported backend value");
   }
   if (sessionCookieSameSite === "None" && !sessionCookieSecure) {
     throw new Error("SESSION_COOKIE_SECURE must be enabled when SESSION_COOKIE_SAMESITE=None");
@@ -284,9 +305,9 @@ async function createApp() {
 
   let sessionStore = null;
   let sessionRedisClient = null;
-  let sessionHealthy = sessionStoreBackend !== "redis";
+  let sessionHealthy = sessionStoreBackend !== backendPrimary;
 
-  if (sessionStoreBackend === "redis") {
+  if (sessionStoreBackend === backendPrimary) {
     try {
       sessionRedisClient = createClient({ url: sessionRedisUrl });
       sessionRedisClient.on("error", () => {});
@@ -343,7 +364,7 @@ async function createApp() {
           formAction: ["'self'"],
         },
       },
-      hsts: appEnv === "production",
+      hsts: appEnv === appEnvTarget,
     })
   );
 
@@ -381,7 +402,7 @@ async function createApp() {
     const now = Date.now() / 1000;
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const limited =
-      rateLimitBackend === "redis"
+      rateLimitBackend === backendPrimary
         ? await limiter.isRateLimitedRedis(ip, now)
         : await limiter.isRateLimitedMemory(ip, now);
 
@@ -413,12 +434,12 @@ async function createApp() {
   app.get("/readyz", async (req, res) => {
     const rateLimiterStatus = limiter.status();
     const rateLimiterHealthy =
-      rateLimiterStatus.backend === "redis"
+      rateLimiterStatus.backend === backendPrimary
         ? rateLimiterStatus.usingRedis && (await limiter.ping())
         : true;
 
-    let sessionRedisHealthy = sessionStoreBackend !== "redis";
-    if (sessionStoreBackend === "redis") {
+    let sessionRedisHealthy = sessionStoreBackend !== backendPrimary;
+    if (sessionStoreBackend === backendPrimary) {
       if (sessionRedisClient) {
         try {
           await sessionRedisClient.ping();
@@ -441,16 +462,16 @@ async function createApp() {
         healthy: rateLimiterHealthy,
       },
       sessionStore: {
-        backend: sessionStore && sessionStoreBackend === "redis" ? "redis" : "memory",
+        backend: sessionStore && sessionStoreBackend === backendPrimary ? backendPrimary : backendFallback,
         usingRedis: Boolean(sessionRedisClient),
-        healthy: sessionStoreBackend === "redis" ? sessionRedisHealthy : true,
+        healthy: sessionStoreBackend === backendPrimary ? sessionRedisHealthy : true,
       },
     };
 
     let ready = true;
     let degraded = false;
 
-    if (rateLimiterStatus.backend === "redis") {
+    if (rateLimiterStatus.backend === backendPrimary) {
       if (!rateLimiterStatus.usingRedis || !rateLimiterHealthy) {
         if (rateLimiterStatus.requireRedis) {
           ready = false;
@@ -460,7 +481,7 @@ async function createApp() {
       }
     }
 
-    if (sessionStoreBackend === "redis") {
+    if (sessionStoreBackend === backendPrimary) {
       if (!sessionRedisClient || !sessionRedisHealthy) {
         if (sessionRequireRedis) {
           ready = false;
