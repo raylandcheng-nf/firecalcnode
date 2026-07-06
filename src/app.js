@@ -17,6 +17,55 @@ function envBool(name, defaultValue) {
   return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
 }
 
+function envInt(name, defaultValue, minValue, maxValue) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") {
+    return defaultValue;
+  }
+
+  const value = parseInt(String(raw).trim(), 10);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be an integer`);
+  }
+  if (value < minValue || value > maxValue) {
+    throw new Error(`${name} must be between ${minValue} and ${maxValue}`);
+  }
+
+  return value;
+}
+
+function envChoice(name, defaultValue, allowed) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") {
+    return defaultValue;
+  }
+
+  const value = String(raw).trim();
+  if (!allowed.includes(value)) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  }
+  return value;
+}
+
+function envTrustProxy(defaultValue) {
+  const raw = process.env.TRUST_PROXY;
+  if (raw === undefined || String(raw).trim() === "") {
+    return defaultValue;
+  }
+
+  const trimmed = String(raw).trim();
+  const lowered = trimmed.toLowerCase();
+
+  if (["1", "true", "yes", "on"].includes(lowered)) return true;
+  if (["0", "false", "no", "off"].includes(lowered)) return false;
+
+  if (/^\d+$/.test(trimmed)) {
+    return parseInt(trimmed, 10);
+  }
+
+  return trimmed;
+}
+
 function normalizeNumberText(raw) {
   return String(raw || "").trim().replace(/%/g, "").replace(/,/g, ".");
 }
@@ -70,6 +119,31 @@ function createRateLimiter(config, logger) {
   let redisClient = null;
   let redisHealthy = config.backend !== "redis";
 
+  function pruneMemoryState(now) {
+    for (const [ip, bucket] of state.entries()) {
+      const pruned = bucket.filter((ts) => now - ts <= config.windowSeconds);
+      if (pruned.length === 0) {
+        state.delete(ip);
+      } else {
+        state.set(ip, pruned);
+      }
+    }
+  }
+
+  function enforceMemoryCapacity(now) {
+    if (state.size < config.memoryMaxKeys) {
+      return;
+    }
+
+    pruneMemoryState(now);
+
+    while (state.size >= config.memoryMaxKeys) {
+      const oldestKey = state.keys().next().value;
+      if (!oldestKey) break;
+      state.delete(oldestKey);
+    }
+  }
+
   async function initRedis() {
     if (config.backend !== "redis") return;
 
@@ -91,6 +165,10 @@ function createRateLimiter(config, logger) {
   }
 
   async function isRateLimitedMemory(ip, now) {
+    if (!state.has(ip)) {
+      enforceMemoryCapacity(now);
+    }
+
     const bucket = state.get(ip) || [];
     const pruned = bucket.filter((ts) => now - ts <= config.windowSeconds);
     if (pruned.length >= config.maxRequests) {
@@ -170,11 +248,12 @@ async function createApp() {
     throw new Error("SECRET_KEY environment variable is required");
   }
 
-  const maxContentLength = parseInt(process.env.MAX_CONTENT_LENGTH || "16384", 10);
-  const rateLimitWindowSeconds = parseInt(process.env.RATE_LIMIT_WINDOW_SECONDS || "60", 10);
-  const rateLimitMaxRequests = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "60", 10);
-  const rateLimitBackend = (process.env.RATE_LIMIT_BACKEND || "memory").trim().toLowerCase();
-  const rateLimitRequireRedis = envBool("RATE_LIMIT_REQUIRE_REDIS", false);
+  const maxContentLength = envInt("MAX_CONTENT_LENGTH", 16384, 1024, 1048576);
+  const rateLimitWindowSeconds = envInt("RATE_LIMIT_WINDOW_SECONDS", 60, 1, 3600);
+  const rateLimitMaxRequests = envInt("RATE_LIMIT_MAX_REQUESTS", 60, 1, 100000);
+  const rateLimitBackend = envChoice("RATE_LIMIT_BACKEND", appEnv === "production" ? "redis" : "memory", ["memory", "redis"]);
+  const rateLimitRequireRedis = envBool("RATE_LIMIT_REQUIRE_REDIS", appEnv === "production" && rateLimitBackend === "redis");
+  const rateLimitMemoryMaxKeys = envInt("RATE_LIMIT_MEMORY_MAX_KEYS", 50000, 1000, 1000000);
   const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379/0";
   const sessionStoreBackend = (process.env.SESSION_STORE_BACKEND || (appEnv === "production" ? "redis" : "memory"))
     .trim()
@@ -182,13 +261,22 @@ async function createApp() {
   const sessionRequireRedis = envBool("SESSION_REQUIRE_REDIS", appEnv === "production");
   const sessionRedisUrl = process.env.SESSION_REDIS_URL || redisUrl;
   const sessionPrefix = process.env.SESSION_REDIS_PREFIX || "sess:";
-  const trustForwardedFor = envBool("TRUST_X_FORWARDED_FOR", false);
+  const trustProxy = envTrustProxy(false);
   const sessionCookieSecure = envBool("SESSION_COOKIE_SECURE", appEnv === "production");
-  const sessionCookieSameSite = process.env.SESSION_COOKIE_SAMESITE || "Lax";
+  const sessionCookieSameSite = envChoice("SESSION_COOKIE_SAMESITE", "Lax", ["Strict", "Lax", "None"]);
+  const sessionCookieMaxAgeSeconds = envInt("SESSION_COOKIE_MAX_AGE_SECONDS", appEnv === "production" ? 43200 : 86400, 60, 31536000);
+
+  if (!["memory", "redis"].includes(sessionStoreBackend)) {
+    throw new Error("SESSION_STORE_BACKEND must be 'memory' or 'redis'");
+  }
+  if (sessionCookieSameSite === "None" && !sessionCookieSecure) {
+    throw new Error("SESSION_COOKIE_SECURE must be enabled when SESSION_COOKIE_SAMESITE=None");
+  }
 
   const app = express();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", trustProxy);
   app.set("view engine", "ejs");
   app.set("views", path.join(__dirname, "..", "views"));
 
@@ -235,6 +323,7 @@ async function createApp() {
         httpOnly: true,
         secure: sessionCookieSecure,
         sameSite: sessionCookieSameSite,
+        maxAge: sessionCookieMaxAgeSeconds * 1000,
       },
     })
   );
@@ -270,19 +359,12 @@ async function createApp() {
       redisUrl,
       windowSeconds: rateLimitWindowSeconds,
       maxRequests: rateLimitMaxRequests,
+      memoryMaxKeys: rateLimitMemoryMaxKeys,
     },
     console
   );
 
   await limiter.initRedis();
-
-  function clientIp(req) {
-    if (trustForwardedFor) {
-      const forwarded = String(req.headers["x-forwarded-for"] || "").trim();
-      if (forwarded) return forwarded.split(",")[0].trim();
-    }
-    return req.ip || req.socket.remoteAddress || "unknown";
-  }
 
   function getCsrfToken(req) {
     if (!req.session.csrfToken) {
@@ -297,7 +379,7 @@ async function createApp() {
     }
 
     const now = Date.now() / 1000;
-    const ip = clientIp(req);
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
     const limited =
       rateLimitBackend === "redis"
         ? await limiter.isRateLimitedRedis(ip, now)

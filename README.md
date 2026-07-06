@@ -50,3 +50,26 @@ Then open `http://127.0.0.1:8080`.
 ```powershell
 npm run cli -- --age 32 --spend 50000 --investments 180000 --return-rate 7 --inflation-rate 2.5 --income 95000 --withdrawal-rate 4 --iterations 5000 --return-std-dev 15 --inflation-std-dev 1
 ```
+
+## Build For Deployment
+
+Generate a deployment artifact in the `dist` folder:
+
+```powershell
+npm run build
+```
+
+This copies runtime files to `dist`:
+- `src/`
+- `views/`
+- `package.json`
+- `package-lock.json`
+- `.env.example`
+
+Deploy using the `dist` folder:
+
+```powershell
+cd dist
+npm ci --omit=dev
+npm start
+```
