@@ -1,6 +1,7 @@
 [functions]
 node_bundler = "esbuild"
 included_files = ["views/**"]
+external_node_modules = ["redis"]
 
 [build]
 functions = "netlify/functions"
