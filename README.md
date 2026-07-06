@@ -8,13 +8,6 @@ Node.js replication of the Python FIRE + Monte Carlo app.
   - `next_portfolio = (portfolio + annual_savings) * (1 + expected_return_rate)`
 - Post-retirement Monte Carlo longevity simulation to ages 75/80/85/90/95/100
 - Probability portfolio never runs out through age 200
-- Production hardening:
-  - Required `SECRET_KEY`
-  - CSRF form token checks
-  - Security headers via Helmet + Permissions-Policy
-  - Request size limit
-  - Rate limiting (memory or Redis backend)
-  - Optional Redis fail-closed mode
 
 ## Install
 
