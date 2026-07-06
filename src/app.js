@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 
 const express = require("express");
@@ -73,6 +74,22 @@ function envTrustProxy(defaultValue) {
 
 function normalizeNumberText(raw) {
   return String(raw || "").trim().replace(/%/g, "").replace(/,/g, ".");
+}
+
+function resolveViewsDir() {
+  const candidates = [
+    path.join(__dirname, "..", "views"),
+    path.join(process.cwd(), "views"),
+    path.join(process.cwd(), "netlify", "views"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, "index.ejs"))) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
 }
 
 function parseStrictInt(raw) {
@@ -295,11 +312,12 @@ async function createApp() {
   }
 
   const app = express();
+  const viewsDir = resolveViewsDir();
 
   app.disable("x-powered-by");
   app.set("trust proxy", trustProxy);
   app.set("view engine", "ejs");
-  app.set("views", path.join(__dirname, "..", "views"));
+  app.set("views", viewsDir);
 
   app.use(express.urlencoded({ extended: false, limit: `${maxContentLength}b` }));
 
