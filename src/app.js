@@ -303,6 +303,7 @@ async function createApp() {
     60,
     31536000
   );
+  const csrfTokenMaxAgeSeconds = envInt("CSRF_TOKEN_MAX_AGE_SECONDS", 86400, 60, 604800);
 
   if (![backendFallback, backendPrimary].includes(sessionStoreBackend)) {
     throw new Error("SESSION_STORE_BACKEND must be set to a supported backend value");
@@ -405,11 +406,40 @@ async function createApp() {
 
   await limiter.initRedis();
 
-  function getCsrfToken(req) {
-    if (!req.session.csrfToken) {
-      req.session.csrfToken = crypto.randomBytes(32).toString("base64url");
-    }
-    return req.session.csrfToken;
+  function computeCsrfSignature(ts, nonce) {
+    return crypto
+      .createHmac("sha256", secretKey)
+      .update(`${ts}.${nonce}`)
+      .digest("base64url");
+  }
+
+  function getCsrfToken() {
+    const ts = Math.floor(Date.now() / 1000);
+    const nonce = crypto.randomBytes(16).toString("base64url");
+    const sig = computeCsrfSignature(ts, nonce);
+    return `${ts}.${nonce}.${sig}`;
+  }
+
+  function verifyCsrfToken(rawToken) {
+    const token = String(rawToken || "").trim();
+    if (!token) return false;
+
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+
+    const [tsText, nonce, sig] = parts;
+    if (!/^\d+$/.test(tsText) || !nonce || !sig) return false;
+
+    const ts = parseInt(tsText, 10);
+    if (!Number.isSafeInteger(ts)) return false;
+
+    const ageSeconds = Math.floor(Date.now() / 1000) - ts;
+    if (ageSeconds < 0 || ageSeconds > csrfTokenMaxAgeSeconds) return false;
+
+    const expectedSig = computeCsrfSignature(ts, nonce);
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expectedSig);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
   app.use(async (req, res, next) => {
@@ -430,14 +460,7 @@ async function createApp() {
 
     if (req.method === "POST") {
       const formToken = String(req.body.csrf_token || "");
-      const sessionToken = String(req.session.csrfToken || "");
-      if (!formToken || !sessionToken) {
-        return res.status(400).send("Bad Request");
-      }
-
-      const a = Buffer.from(formToken);
-      const b = Buffer.from(sessionToken);
-      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      if (!verifyCsrfToken(formToken)) {
         return res.status(400).send("Bad Request");
       }
     }
@@ -537,7 +560,7 @@ async function createApp() {
       values,
       result: null,
       error: null,
-      csrfToken: getCsrfToken(req),
+      csrfToken: getCsrfToken(),
       money,
       pct,
     });
@@ -608,7 +631,7 @@ async function createApp() {
       values,
       result,
       error,
-      csrfToken: getCsrfToken(req),
+      csrfToken: getCsrfToken(),
       money,
       pct,
     });
