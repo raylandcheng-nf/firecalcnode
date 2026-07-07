@@ -161,6 +161,50 @@ function pickFormValues(source, defaults) {
   return values;
 }
 
+function buildInputQuery(values, defaults) {
+  const params = new URLSearchParams();
+  Object.keys(defaults).forEach((key) => {
+    const raw = values && values[key] !== undefined ? values[key] : "";
+    const text = String(raw).trim();
+    if (text !== "") {
+      params.set(key, text);
+    }
+  });
+  params.set("run", "1");
+  return params.toString();
+}
+
+function computeResultFromSource(source, defaults) {
+  const fireInputs = validateFireInputs({
+    age: asInt(source, "age", defaults.age),
+    annualSpend: asFloat(source, "spend", defaults.spend),
+    currentInvestments: asFloat(source, "investments", defaults.investments),
+    expectedReturnRate: asPercent(source, "return_rate", defaults.return_rate),
+    inflationRate: asPercent(source, "inflation_rate", defaults.inflation_rate),
+    annualIncome: asFloat(source, "income", defaults.income),
+    withdrawalRate: asPercent(source, "withdrawal_rate", defaults.withdrawal_rate),
+    maxAge: asInt(source, "max_age", defaults.max_age),
+    incomeGrowthRate: asOptionalPercent(source, "income_growth_rate"),
+  });
+
+  const mcParams = validateMonteCarloParams({
+    iterations: asInt(source, "iterations", defaults.iterations),
+    returnStdDev: asPercent(source, "return_std_dev", defaults.return_std_dev),
+    inflationStdDev: asPercent(source, "inflation_std_dev", defaults.inflation_std_dev),
+    seed: String(source.seed || "").trim() ? asInt(source, "seed", 0) : null,
+  });
+
+  const projection = projectRetirement(fireInputs);
+  const deterministicRows = deterministicProjectionRows(fireInputs);
+  const monteCarlo = runMonteCarlo(fireInputs, mcParams, projection);
+
+  return {
+    projection,
+    deterministicRows,
+    monteCarlo,
+  };
+}
+
 function createRateLimiter(config, logger) {
   const state = new Map();
   let redisClient = null;
@@ -566,11 +610,25 @@ async function createApp() {
 
   app.get("/", (req, res) => {
     const values = pickFormValues(req.query, DEFAULT_FORM_VALUES);
+    const shouldRun = String(req.query.run || "").trim() === "1";
+    let result = null;
+    let error = null;
+
+    if (shouldRun) {
+      try {
+        result = computeResultFromSource(req.query, DEFAULT_FORM_VALUES);
+      } catch (err) {
+        if (err instanceof Error) {
+          console.info("Validation error:", err.message);
+        }
+        error = "Invalid input. Please review your entries and try again.";
+      }
+    }
 
     res.render("index", {
       values,
-      result: null,
-      error: null,
+      result,
+      error,
       csrfToken: getCsrfToken(),
       money,
       pct,
@@ -582,38 +640,11 @@ async function createApp() {
 
     const values = pickFormValues(req.body, defaults);
 
-    let result = null;
     let error = null;
 
     try {
-      const fireInputs = validateFireInputs({
-        age: asInt(req.body, "age", defaults.age),
-        annualSpend: asFloat(req.body, "spend", defaults.spend),
-        currentInvestments: asFloat(req.body, "investments", defaults.investments),
-        expectedReturnRate: asPercent(req.body, "return_rate", defaults.return_rate),
-        inflationRate: asPercent(req.body, "inflation_rate", defaults.inflation_rate),
-        annualIncome: asFloat(req.body, "income", defaults.income),
-        withdrawalRate: asPercent(req.body, "withdrawal_rate", defaults.withdrawal_rate),
-        maxAge: asInt(req.body, "max_age", defaults.max_age),
-        incomeGrowthRate: asOptionalPercent(req.body, "income_growth_rate"),
-      });
-
-      const mcParams = validateMonteCarloParams({
-        iterations: asInt(req.body, "iterations", defaults.iterations),
-        returnStdDev: asPercent(req.body, "return_std_dev", defaults.return_std_dev),
-        inflationStdDev: asPercent(req.body, "inflation_std_dev", defaults.inflation_std_dev),
-        seed: String(req.body.seed || "").trim() ? asInt(req.body, "seed", 0) : null,
-      });
-
-      const projection = projectRetirement(fireInputs);
-      const deterministicRows = deterministicProjectionRows(fireInputs);
-      const monteCarlo = runMonteCarlo(fireInputs, mcParams, projection);
-
-      result = {
-        projection,
-        deterministicRows,
-        monteCarlo,
-      };
+      computeResultFromSource(req.body, defaults);
+      return res.redirect(303, `/?${buildInputQuery(values, defaults)}`);
     } catch (err) {
       if (err instanceof Error) {
         console.info("Validation error:", err.message);
@@ -623,7 +654,7 @@ async function createApp() {
 
     res.render("index", {
       values,
-      result,
+      result: null,
       error,
       csrfToken: getCsrfToken(),
       money,
