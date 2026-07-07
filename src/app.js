@@ -207,6 +207,7 @@ function computeResultFromSource(source, defaults) {
 
 function createRateLimiter(config, logger) {
   const state = new Map();
+  const globalState = [];
   let redisClient = null;
   let redisHealthy = config.backend !== backendPrimary;
 
@@ -294,6 +295,46 @@ function createRateLimiter(config, logger) {
     }
   }
 
+  async function isGloballyRateLimitedMemory(now) {
+    if (!config.globalEnabled) return false;
+
+    while (globalState.length > 0 && now - globalState[0] > config.globalWindowSeconds) {
+      globalState.shift();
+    }
+
+    if (globalState.length >= config.globalMaxRequests) {
+      return true;
+    }
+
+    globalState.push(now);
+    return false;
+  }
+
+  async function isGloballyRateLimitedRedis(now) {
+    if (!config.globalEnabled) return false;
+
+    if (!redisClient) {
+      redisHealthy = false;
+      return isGloballyRateLimitedMemory(now);
+    }
+
+    const windowBucket = Math.floor(now / config.globalWindowSeconds);
+    const key = `rl:global:${windowBucket}`;
+
+    try {
+      const count = await redisClient.incr(key);
+      if (count === 1) {
+        await redisClient.expire(key, config.globalWindowSeconds + 1);
+      }
+      redisHealthy = true;
+      return count > config.globalMaxRequests;
+    } catch (err) {
+      redisHealthy = false;
+      logger.warn("Redis global rate limiter operation failed; falling back to memory backend");
+      return isGloballyRateLimitedMemory(now);
+    }
+  }
+
   async function ping() {
     if (!redisClient) return false;
     try {
@@ -312,6 +353,9 @@ function createRateLimiter(config, logger) {
       requireRedis: config.requireRedis,
       usingRedis: Boolean(redisClient),
       redisHealthy,
+      globalEnabled: config.globalEnabled,
+      globalWindowSeconds: config.globalWindowSeconds,
+      globalMaxRequests: config.globalMaxRequests,
     };
   }
 
@@ -326,6 +370,8 @@ function createRateLimiter(config, logger) {
     initRedis,
     isRateLimitedMemory,
     isRateLimitedRedis,
+    isGloballyRateLimitedMemory,
+    isGloballyRateLimitedRedis,
     ping,
     status,
     close,
@@ -352,6 +398,9 @@ async function createApp() {
     appEnv === appEnvTarget && rateLimitBackend === backendPrimary
   );
   const rateLimitMemoryMaxKeys = envInt("RATE_LIMIT_MEMORY_MAX_KEYS", 50000, 1000, 1000000);
+  const globalRateLimitEnabled = envBool("GLOBAL_RATE_LIMIT_ENABLED", true);
+  const globalRateLimitWindowSeconds = envInt("GLOBAL_RATE_LIMIT_WINDOW_SECONDS", rateLimitWindowSeconds, 1, 3600);
+  const globalRateLimitMaxRequests = envInt("GLOBAL_RATE_LIMIT_MAX_REQUESTS", 300, 1, 1000000);
   const redisUrl = (process.env.REDIS_URL || "").trim();
   if (!redisUrl) {
     throw new Error("REDIS_URL environment variable is required");
@@ -469,6 +518,9 @@ async function createApp() {
       windowSeconds: rateLimitWindowSeconds,
       maxRequests: rateLimitMaxRequests,
       memoryMaxKeys: rateLimitMemoryMaxKeys,
+      globalEnabled: globalRateLimitEnabled,
+      globalWindowSeconds: globalRateLimitWindowSeconds,
+      globalMaxRequests: globalRateLimitMaxRequests,
     },
     console
   );
@@ -517,6 +569,15 @@ async function createApp() {
     }
 
     const now = Date.now() / 1000;
+    const globallyLimited =
+      rateLimitBackend === backendPrimary
+        ? await limiter.isGloballyRateLimitedRedis(now)
+        : await limiter.isGloballyRateLimitedMemory(now);
+
+    if (globallyLimited) {
+      return res.status(429).send("Too Many Requests");
+    }
+
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const limited =
       rateLimitBackend === backendPrimary
