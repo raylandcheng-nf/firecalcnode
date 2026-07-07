@@ -136,6 +136,31 @@ function pct(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+const DEFAULT_FORM_VALUES = {
+  age: 32,
+  spend: 50000,
+  investments: 180000,
+  return_rate: 7,
+  inflation_rate: 2.5,
+  income: 95000,
+  withdrawal_rate: 4,
+  max_age: 80,
+  income_growth_rate: "",
+  iterations: 5000,
+  return_std_dev: 15,
+  inflation_std_dev: 1,
+  seed: "",
+};
+
+function pickFormValues(source, defaults) {
+  const values = {};
+  Object.keys(defaults).forEach((key) => {
+    const raw = source && source[key] !== undefined ? source[key] : defaults[key];
+    values[key] = Array.isArray(raw) ? raw[0] : raw;
+  });
+  return values;
+}
+
 function createRateLimiter(config, logger) {
   const state = new Map();
   let redisClient = null;
@@ -540,21 +565,7 @@ async function createApp() {
   });
 
   app.get("/", (req, res) => {
-    const values = {
-      age: 32,
-      spend: 50000,
-      investments: 180000,
-      return_rate: 7,
-      inflation_rate: 2.5,
-      income: 95000,
-      withdrawal_rate: 4,
-      max_age: 80,
-      income_growth_rate: "",
-      iterations: 5000,
-      return_std_dev: 15,
-      inflation_std_dev: 1,
-      seed: "",
-    };
+    const values = pickFormValues(req.query, DEFAULT_FORM_VALUES);
 
     res.render("index", {
       values,
@@ -567,26 +578,9 @@ async function createApp() {
   });
 
   app.post("/", (req, res) => {
-    const defaults = {
-      age: 32,
-      spend: 50000,
-      investments: 180000,
-      return_rate: 7,
-      inflation_rate: 2.5,
-      income: 95000,
-      withdrawal_rate: 4,
-      max_age: 80,
-      income_growth_rate: "",
-      iterations: 5000,
-      return_std_dev: 15,
-      inflation_std_dev: 1,
-      seed: "",
-    };
+    const defaults = DEFAULT_FORM_VALUES;
 
-    const values = {};
-    Object.keys(defaults).forEach((key) => {
-      values[key] = req.body[key] !== undefined ? req.body[key] : defaults[key];
-    });
+    const values = pickFormValues(req.body, defaults);
 
     let result = null;
     let error = null;
