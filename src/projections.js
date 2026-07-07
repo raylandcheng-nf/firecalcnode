@@ -12,14 +12,18 @@ function deterministicProjectionRows(input) {
   const rows = [];
 
   if (spend <= 0 || portfolio >= target) {
+    const returnAmount = portfolio * data.expectedReturnRate;
+    const afterReturn = portfolio + returnAmount;
+    const endPortfolio = afterReturn + annualSavings;
     rows.push({
       year: 0,
       age,
       startPortfolio: portfolio,
       annualSavings,
-      afterSavings: portfolio,
-      returnAmount: 0,
-      endPortfolio: portfolio,
+      returnAmount,
+      afterReturn,
+      afterSavings: endPortfolio,
+      endPortfolio,
       fireTarget: target,
       reachedFire: true,
     });
@@ -28,9 +32,10 @@ function deterministicProjectionRows(input) {
 
   for (let years = 1; years <= data.maxAge - age; years += 1) {
     const startPortfolio = portfolio;
-    const afterSavings = startPortfolio + annualSavings;
-    const endPortfolio = afterSavings * (1 + data.expectedReturnRate);
-    const returnAmount = endPortfolio - afterSavings;
+    const returnAmount = startPortfolio * data.expectedReturnRate;
+    const afterReturn = startPortfolio + returnAmount;
+    const endPortfolio = afterReturn + annualSavings;
+    const afterSavings = endPortfolio;
     const reachedFire = endPortfolio >= target;
 
     rows.push({
@@ -38,6 +43,7 @@ function deterministicProjectionRows(input) {
       age: age + years,
       startPortfolio,
       annualSavings,
+      afterReturn,
       afterSavings,
       returnAmount,
       endPortfolio,

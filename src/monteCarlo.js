@@ -7,7 +7,7 @@ function runMonteCarlo(input, params, projectionArg) {
   const sim = validateMonteCarloParams({ ...params });
 
   const targetAges = [75, 80, 85, 90, 95, 100];
-  const simulationHorizonAge = 200;
+  const simulationHorizonAge = 120;
 
   const projection = projectionArg || projectRetirement(data);
   if (!projection.retired || projection.retirementAge === null) {

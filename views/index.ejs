@@ -128,16 +128,17 @@
 
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Year</th><th>Age</th><th>Start Portfolio</th><th>Annual Savings</th><th>After Savings</th><th>Return Amount</th></tr></thead>
+              <thead><tr><th>Year</th><th>Age</th><th>Start Portfolio</th><th>Return Amount</th><th>After Return</th><th>Annual Savings</th><th>End Portfolio</th></tr></thead>
               <tbody>
                 <% result.deterministicRows.forEach(function(row) { %>
                   <tr class="<%= row.reachedFire ? 'row-hit' : '' %>">
                     <td><%= row.year %></td>
                     <td><%= row.age %></td>
                     <td>$<%= money(row.startPortfolio) %></td>
-                    <td>$<%= money(row.annualSavings) %></td>
-                    <td>$<%= money(row.afterSavings) %></td>
                     <td>$<%= money(row.returnAmount) %></td>
+                    <td>$<%= money(row.afterReturn) %></td>
+                    <td>$<%= money(row.annualSavings) %></td>
+                    <td>$<%= money(row.endPortfolio) %></td>
                   </tr>
                 <% }) %>
               </tbody>

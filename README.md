@@ -7,7 +7,7 @@ Node.js replication of the Python FIRE + Monte Carlo app.
   - `target = annual_spend / withdrawal_rate`
   - `next_portfolio = (portfolio + annual_savings) * (1 + expected_return_rate)`
 - Post-retirement Monte Carlo longevity simulation to ages 75/80/85/90/95/100
-- Probability portfolio never runs out through age 200
+- Probability portfolio never runs out through age 120
 
 ## Install
 
